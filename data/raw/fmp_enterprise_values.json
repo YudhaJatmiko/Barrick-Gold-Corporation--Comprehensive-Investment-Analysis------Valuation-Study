@@ -1,0 +1,52 @@
+[
+  {
+    "symbol": "GOLD",
+    "date": "2024-12-31",
+    "stockPrice": 15.5,
+    "numberOfShares": 1751000000,
+    "marketCapitalization": 27140500000,
+    "minusCashAndCashEquivalents": 4074000000,
+    "addTotalDebt": 5256000000,
+    "enterpriseValue": 28322500000
+  },
+  {
+    "symbol": "GOLD",
+    "date": "2023-12-31",
+    "stockPrice": 18.09,
+    "numberOfShares": 1755000000,
+    "marketCapitalization": 31747950000,
+    "minusCashAndCashEquivalents": 4148000000,
+    "addTotalDebt": 5223000000,
+    "enterpriseValue": 32822950000
+  },
+  {
+    "symbol": "GOLD",
+    "date": "2022-12-31",
+    "stockPrice": 17.18,
+    "numberOfShares": 1771000000,
+    "marketCapitalization": 30425780000,
+    "minusCashAndCashEquivalents": 4440000000,
+    "addTotalDebt": 5250000000,
+    "enterpriseValue": 31235780000
+  },
+  {
+    "symbol": "GOLD",
+    "date": "2021-12-31",
+    "stockPrice": 19,
+    "numberOfShares": 1779000000,
+    "marketCapitalization": 33801000000,
+    "minusCashAndCashEquivalents": 5280000000,
+    "addTotalDebt": 5473000000,
+    "enterpriseValue": 33994000000
+  },
+  {
+    "symbol": "GOLD",
+    "date": "2020-12-31",
+    "stockPrice": 22.78,
+    "numberOfShares": 1778000000,
+    "marketCapitalization": 40502840000,
+    "minusCashAndCashEquivalents": 5188000000,
+    "addTotalDebt": 5364000000,
+    "enterpriseValue": 40678840000
+  }
+]

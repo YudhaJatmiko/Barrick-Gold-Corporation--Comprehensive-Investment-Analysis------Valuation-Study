@@ -1,0 +1,525 @@
+import dash
+from dash import dcc, html, Input, Output, dash_table
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import pandas as pd
+import json
+from datetime import datetime, timedelta
+import numpy as np
+
+# Load data
+def load_dashboard_data():
+    """Load all data required for dashboard"""
+    try:
+        # Price data
+        price_data = pd.read_csv('data/raw/abx_daily_prices.csv', index_col=0, parse_dates=True)
+        
+        # Company info
+        with open('data/raw/abx_company_info.json', 'r') as f:
+            company_info = json.load(f)
+            
+        # Peer data
+        with open('data/raw/peer_comparison_data.json', 'r') as f:
+            peer_data = json.load(f)
+            
+        return price_data, company_info, peer_data
+    except Exception as e:
+        print(f"Error loading dashboard data: {e}")
+        return pd.DataFrame(), {}, {}
+
+# Initialize the Dash app
+app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/pen/bWLwgP.css'])
+
+# Load data
+price_data, company_info, peer_data = load_dashboard_data()
+
+# Calculate key metrics
+current_price = price_data['Close'].iloc[-1] if not price_data.empty else 0
+daily_change = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-2]) - 1) * 100 if len(price_data) > 1 else 0
+market_cap = company_info.get('marketCap', 0) / 1e9  # In billions
+
+# Define the layout
+app.layout = html.Div([
+    html.Div([
+        html.H1("Barrick Gold Corporation - Portfolio Dashboard", 
+                style={'textAlign': 'center', 'color': '#2c3e50', 'marginBottom': '30px'}),
+        
+        # Key metrics row
+        html.Div([
+            html.Div([
+                html.H3(f"${current_price:.2f}", style={'margin': '0', 'color': '#27ae60'}),
+                html.P("Current Price", style={'margin': '0', 'color': '#7f8c8d'})
+            ], className='three columns', style={'textAlign': 'center', 'padding': '20px', 'backgroundColor': '#ecf0f1', 'border-radius': '5px', 'margin': '5px'}),
+            
+            html.Div([
+                html.H3(f"{daily_change:+.2f}%", style={'margin': '0', 'color': '#e74c3c' if daily_change < 0 else '#27ae60'}),
+                html.P("Daily Change", style={'margin': '0', 'color': '#7f8c8d'})
+            ], className='three columns', style={'textAlign': 'center', 'padding': '20px', 'backgroundColor': '#ecf0f1', 'border-radius': '5px', 'margin': '5px'}),
+            
+            html.Div([
+                html.H3(f"${market_cap:.1f}B", style={'margin': '0', 'color': '#3498db'}),
+                html.P("Market Cap", style={'margin': '0', 'color': '#7f8c8d'})
+            ], className='three columns', style={'textAlign': 'center', 'padding': '20px', 'backgroundColor': '#ecf0f1', 'border-radius': '5px', 'margin': '5px'}),
+            
+            html.Div([
+                html.H3(f"{company_info.get('forwardPE', 0):.1f}x", style={'margin': '0', 'color': '#9b59b6'}),
+                html.P("P/E Ratio", style={'margin': '0', 'color': '#7f8c8d'})
+            ], className='three columns', style={'textAlign': 'center', 'padding': '20px', 'backgroundColor': '#ecf0f1', 'border-radius': '5px', 'margin': '5px'}),
+        ], className='row', style={'marginBottom': '30px'}),
+        
+        # Controls
+        html.Div([
+            html.Label("Time Period:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+            dcc.Dropdown(
+                id='time-period',
+                options=[
+                    {'label': '1 Month', 'value': '1M'},
+                    {'label': '3 Months', 'value': '3M'},
+                    {'label': '6 Months', 'value': '6M'},
+                    {'label': '1 Year', 'value': '1Y'},
+                    {'label': '2 Years', 'value': '2Y'},
+                    {'label': 'All Time', 'value': 'ALL'}
+                ],
+                value='1Y',
+                style={'width': '200px', 'display': 'inline-block'}
+            ),
+            
+            html.Label("Chart Type:", style={'fontWeight': 'bold', 'marginLeft': '30px', 'marginRight': '10px'}),
+            dcc.Dropdown(
+                id='chart-type',
+                options=[
+                    {'label': 'Candlestick', 'value': 'candlestick'},
+                    {'label': 'Line Chart', 'value': 'line'},
+                    {'label': 'OHLC', 'value': 'ohlc'}
+                ],
+                value='candlestick',
+                style={'width': '200px', 'display': 'inline-block'}
+            )
+        ], style={'marginBottom': '20px'}),
+        
+        # Main price chart
+        dcc.Graph(id='price-chart', style={'height': '500px'}),
+        
+        # Second row with multiple charts
+        html.Div([
+            html.Div([
+                dcc.Graph(id='volume-chart')
+            ], className='six columns'),
+            
+            html.Div([
+                dcc.Graph(id='technical-indicators')
+            ], className='six columns')
+        ], className='row'),
+        
+        # Third row
+        html.Div([
+            html.Div([
+                dcc.Graph(id='peer-comparison')
+            ], className='six columns'),
+            
+            html.Div([
+                dcc.Graph(id='risk-metrics')
+            ], className='six columns')
+        ], className='row'),
+        
+        # Performance metrics table
+        html.H3("Performance Metrics", style={'marginTop': '30px', 'color': '#2c3e50'}),
+        html.Div(id='performance-table'),
+        
+        # Peer comparison table
+        html.H3("Peer Comparison", style={'marginTop': '30px', 'color': '#2c3e50'}),
+        html.Div(id='peer-table'),
+        
+        # Auto-refresh component
+        dcc.Interval(
+            id='interval-component',
+            interval=60*1000,  # Update every minute
+            n_intervals=0
+        ),
+        
+        # Last update timestamp
+        html.Div(id='last-update', style={'textAlign': 'center', 'marginTop': '20px', 'color': '#7f8c8d'})
+        
+    ], style={'margin': '20px'})
+])
+
+# Callback for price chart
+@app.callback(
+    Output('price-chart', 'figure'),
+    [Input('time-period', 'value'),
+     Input('chart-type', 'value'),
+     Input('interval-component', 'n_intervals')]
+)
+def update_price_chart(time_period, chart_type, n_intervals):
+    # Filter data based on time period
+    end_date = price_data.index[-1] if not price_data.empty else datetime.now()
+    
+    if time_period == '1M':
+        start_date = end_date - timedelta(days=30)
+    elif time_period == '3M':
+        start_date = end_date - timedelta(days=90)
+    elif time_period == '6M':
+        start_date = end_date - timedelta(days=180)
+    elif time_period == '1Y':
+        start_date = end_date - timedelta(days=365)
+    elif time_period == '2Y':
+        start_date = end_date - timedelta(days=730)
+    else:  # ALL
+        start_date = price_data.index[0] if not price_data.empty else datetime.now() - timedelta(days=365)
+    
+    filtered_data = price_data[price_data.index >= start_date] if not price_data.empty else pd.DataFrame()
+    
+    fig = go.Figure()
+    
+    if not filtered_data.empty:
+        if chart_type == 'candlestick':
+            fig.add_trace(go.Candlestick(
+                x=filtered_data.index,
+                open=filtered_data['Open'],
+                high=filtered_data['High'],
+                low=filtered_data['Low'],
+                close=filtered_data['Close'],
+                name='ABX.TO'
+            ))
+        elif chart_type == 'line':
+            fig.add_trace(go.Scatter(
+                x=filtered_data.index,
+                y=filtered_data['Close'],
+                mode='lines',
+                name='Close Price',
+                line=dict(color='#3498db', width=2)
+            ))
+        elif chart_type == 'ohlc':
+            fig.add_trace(go.Ohlc(
+                x=filtered_data.index,
+                open=filtered_data['Open'],
+                high=filtered_data['High'],
+                low=filtered_data['Low'],
+                close=filtered_data['Close'],
+                name='ABX.TO'
+            ))
+        
+        # Add moving averages
+        if len(filtered_data) > 20:
+            ma_20 = filtered_data['Close'].rolling(window=20).mean()
+            fig.add_trace(go.Scatter(
+                x=filtered_data.index,
+                y=ma_20,
+                mode='lines',
+                name='20-day MA',
+                line=dict(color='orange', width=1)
+            ))
+        
+        if len(filtered_data) > 50:
+            ma_50 = filtered_data['Close'].rolling(window=50).mean()
+            fig.add_trace(go.Scatter(
+                x=filtered_data.index,
+                y=ma_50,
+                mode='lines',
+                name='50-day MA',
+                line=dict(color='red', width=1)
+            ))
+    
+    fig.update_layout(
+        title=f'Barrick Gold (ABX.TO) - {time_period} Price Chart',
+        yaxis_title='Price (CAD)',
+        xaxis_title='Date',
+        template='plotly_white',
+        height=500
+    )
+    
+    return fig
+
+# Callback for volume chart
+@app.callback(
+    Output('volume-chart', 'figure'),
+    [Input('time-period', 'value'),
+     Input('interval-component', 'n_intervals')]
+)
+def update_volume_chart(time_period, n_intervals):
+    # Filter data based on time period (same logic as price chart)
+    end_date = price_data.index[-1] if not price_data.empty else datetime.now()
+    
+    if time_period == '1M':
+        start_date = end_date - timedelta(days=30)
+    elif time_period == '3M':
+        start_date = end_date - timedelta(days=90)
+    elif time_period == '6M':
+        start_date = end_date - timedelta(days=180)
+    elif time_period == '1Y':
+        start_date = end_date - timedelta(days=365)
+    elif time_period == '2Y':
+        start_date = end_date - timedelta(days=730)
+    else:  # ALL
+        start_date = price_data.index[0] if not price_data.empty else datetime.now() - timedelta(days=365)
+    
+    filtered_data = price_data[price_data.index >= start_date] if not price_data.empty else pd.DataFrame()
+    
+    fig = go.Figure()
+    
+    if not filtered_data.empty:
+        fig.add_trace(go.Bar(
+            x=filtered_data.index,
+            y=filtered_data['Volume'],
+            name='Volume',
+            marker_color='lightblue'
+        ))
+        
+        # Add volume moving average
+        if len(filtered_data) > 20:
+            vol_ma = filtered_data['Volume'].rolling(window=20).mean()
+            fig.add_trace(go.Scatter(
+                x=filtered_data.index,
+                y=vol_ma,
+                mode='lines',
+                name='20-day Vol MA',
+                line=dict(color='red', width=2)
+            ))
+    
+    fig.update_layout(
+        title='Trading Volume',
+        yaxis_title='Volume',
+        xaxis_title='Date',
+        template='plotly_white'
+    )
+    
+    return fig
+
+# Callback for technical indicators
+@app.callback(
+    Output('technical-indicators', 'figure'),
+    [Input('time-period', 'value'),
+     Input('interval-component', 'n_intervals')]
+)
+def update_technical_indicators(time_period, n_intervals):
+    # Calculate RSI
+    if not price_data.empty:
+        delta = price_data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Filter based on time period
+        end_date = price_data.index[-1]
+        if time_period == '1M':
+            start_date = end_date - timedelta(days=30)
+        elif time_period == '3M':
+            start_date = end_date - timedelta(days=90)
+        elif time_period == '6M':
+            start_date = end_date - timedelta(days=180)
+        elif time_period == '1Y':
+            start_date = end_date - timedelta(days=365)
+        elif time_period == '2Y':
+            start_date = end_date - timedelta(days=730)
+        else:  # ALL
+            start_date = price_data.index[0]
+        
+        filtered_rsi = rsi[rsi.index >= start_date]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=filtered_rsi.index,
+            y=filtered_rsi,
+            mode='lines',
+            name='RSI',
+            line=dict(color='purple', width=2)
+        ))
+        
+        # Add RSI levels
+        fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought (70)")
+        fig.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="Neutral (50)")
+        fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold (30)")
+        
+        fig.update_layout(
+            title='RSI (Relative Strength Index)',
+            yaxis_title='RSI',
+            xaxis_title='Date',
+            template='plotly_white',
+            yaxis=dict(range=[0, 100])
+        )
+    else:
+        fig = go.Figure()
+        fig.update_layout(title='RSI - No Data Available')
+    
+    return fig
+
+# Callback for peer comparison
+@app.callback(
+    Output('peer-comparison', 'figure'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_peer_comparison(n_intervals):
+    fig = go.Figure()
+    
+    if peer_data:
+        # Get main peers
+        main_peers = ['ABX.TO', 'NEM', 'AEM', 'KGC', 'AU']
+        peer_returns = []
+        peer_symbols = []
+        
+        for symbol in main_peers:
+            if symbol in peer_data:
+                peer_returns.append(peer_data[symbol]['returns_1y'])
+                peer_symbols.append(symbol)
+        
+        colors = ['red' if symbol == 'ABX.TO' else 'lightblue' for symbol in peer_symbols]
+        
+        fig.add_trace(go.Bar(
+            x=peer_symbols,
+            y=peer_returns,
+            marker_color=colors,
+            name='1Y Returns (%)',
+            text=[f'{r:.1f}%' for r in peer_returns],
+            textposition='auto'
+        ))
+    
+    fig.update_layout(
+        title='1-Year Returns vs Peers',
+        yaxis_title='Returns (%)',
+        xaxis_title='Symbol',
+        template='plotly_white'
+    )
+    
+    return fig
+
+# Callback for risk metrics
+@app.callback(
+    Output('risk-metrics', 'figure'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_risk_metrics(n_intervals):
+    fig = go.Figure()
+    
+    if not price_data.empty:
+        # Calculate rolling volatility
+        returns = price_data['Close'].pct_change().dropna()
+        rolling_vol = returns.rolling(30).std() * np.sqrt(252) * 100  # Annualized
+        
+        # Show last year of volatility
+        recent_vol = rolling_vol.tail(252)
+        
+        fig.add_trace(go.Scatter(
+            x=recent_vol.index,
+            y=recent_vol,
+            mode='lines',
+            name='30D Rolling Volatility (%)',
+            line=dict(color='orange', width=2),
+            fill='tonexty'
+        ))
+        
+        # Add average volatility line
+        avg_vol = recent_vol.mean()
+        fig.add_hline(y=avg_vol, line_dash="dash", line_color="red", 
+                     annotation_text=f"Avg: {avg_vol:.1f}%")
+    
+    fig.update_layout(
+        title='30-Day Rolling Volatility',
+        yaxis_title='Volatility (%)',
+        xaxis_title='Date',
+        template='plotly_white'
+    )
+    
+    return fig
+
+# Callback for performance table
+@app.callback(
+    Output('performance-table', 'children'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_performance_table(n_intervals):
+    if price_data.empty:
+        return html.Div("No data available")
+    
+    # Calculate performance metrics
+    current_price = price_data['Close'].iloc[-1]
+    
+    # Returns calculation
+    returns_1d = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-2]) - 1) * 100 if len(price_data) > 1 else 0
+    returns_1w = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-6]) - 1) * 100 if len(price_data) > 5 else 0
+    returns_1m = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-22]) - 1) * 100 if len(price_data) > 22 else 0
+    returns_3m = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-66]) - 1) * 100 if len(price_data) > 66 else 0
+    returns_1y = ((price_data['Close'].iloc[-1] / price_data['Close'].iloc[-252]) - 1) * 100 if len(price_data) > 252 else 0
+    
+    # Price levels
+    year_high = price_data['High'].tail(252).max() if len(price_data) > 252 else price_data['High'].max()
+    year_low = price_data['Low'].tail(252).min() if len(price_data) > 252 else price_data['Low'].min()
+    
+    performance_data = {
+        'Metric': ['Current Price', '1-Day Return', '1-Week Return', '1-Month Return', 
+                  '3-Month Return', '1-Year Return', '52-Week High', '52-Week Low'],
+        'Value': [f'${current_price:.2f}', f'{returns_1d:+.2f}%', f'{returns_1w:+.2f}%', 
+                 f'{returns_1m:+.2f}%', f'{returns_3m:+.2f}%', f'{returns_1y:+.2f}%',
+                 f'${year_high:.2f}', f'${year_low:.2f}']
+    }
+    
+    return dash_table.DataTable(
+        data=pd.DataFrame(performance_data).to_dict('records'),
+        columns=[{"name": i, "id": i} for i in performance_data.keys()],
+        style_cell={'textAlign': 'left', 'padding': '10px'},
+        style_header={'backgroundColor': '#3498db', 'color': 'white', 'fontWeight': 'bold'},
+        style_data_conditional=[
+            {
+                'if': {'filter_query': '{Value} contains %', 'column_id': 'Value'},
+                'backgroundColor': '#e8f5e8' if '+' in str(returns_1d) else '#ffe6e6',
+                'color': '#27ae60' if '+' in str(returns_1d) else '#e74c3c',
+            }
+        ]
+    )
+
+# Callback for peer table
+@app.callback(
+    Output('peer-table', 'children'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_peer_table(n_intervals):
+    if not peer_data:
+        return html.Div("No peer data available")
+    
+    # Create peer comparison table
+    main_peers = ['ABX.TO', 'NEM', 'AEM', 'KGC', 'AU', 'EGO']
+    peer_table_data = []
+    
+    for symbol in main_peers:
+        if symbol in peer_data:
+            data = peer_data[symbol]
+            peer_table_data.append({
+                'Symbol': symbol,
+                'Company': data['company_name'][:25] + '...' if len(data['company_name']) > 25 else data['company_name'],
+                'Price': f"${data['current_price']:.2f}",
+                'Market Cap': f"${data['market_cap']/1e9:.1f}B",
+                'P/E Ratio': f"{data['pe_ratio']:.1f}x" if data['pe_ratio'] > 0 else 'N/A',
+                '1Y Return': f"{data['returns_1y']:+.1f}%",
+                'Volatility': f"{data['volatility_annualized']:.1f}%"
+            })
+    
+    return dash_table.DataTable(
+        data=peer_table_data,
+        columns=[{"name": i, "id": i} for i in ['Symbol', 'Company', 'Price', 'Market Cap', 'P/E Ratio', '1Y Return', 'Volatility']],
+        style_cell={'textAlign': 'left', 'padding': '10px'},
+        style_header={'backgroundColor': '#9b59b6', 'color': 'white', 'fontWeight': 'bold'},
+        style_data_conditional=[
+            {
+                'if': {'row_index': 0},  # Highlight ABX.TO row
+                'backgroundColor': '#fff3cd',
+                'fontWeight': 'bold'
+            }
+        ]
+    )
+
+# Callback for last update timestamp
+@app.callback(
+    Output('last-update', 'children'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_timestamp(n_intervals):
+    return f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+if __name__ == '__main__':
+    print("Starting Barrick Gold Interactive Dashboard...")
+    print("Dashboard will be available at: http://127.0.0.1:8050")
+    print("Press Ctrl+C to stop the server")
+    
+    app.run_server(debug=True, host='127.0.0.1', port=8050)
